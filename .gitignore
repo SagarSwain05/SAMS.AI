@@ -20,6 +20,9 @@ frontend/.env
 .env.local
 .env.production
 
+# Pre-built frontend (committed so HF Spaces serves it from Flask)
+# backend/frontend_dist/ — intentionally NOT ignored
+
 # ML Models & Dataset (large binary files — excluded from git, deploy separately)
 backend/dataset/
 backend/models/face_recognizer.yml
