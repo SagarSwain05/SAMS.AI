@@ -1,11 +1,16 @@
 """
 Flask Application Factory
 """
+import os
 from flask import Flask
 from flask_cors import CORS
 from flask_socketio import SocketIO
 from .config import get_config
 from .models import db
+
+# In production gunicorn+eventlet, the worker must be monkey-patched BEFORE
+# any other imports. wsgi.py does that. Here we just pick the async mode.
+_ASYNC_MODE = 'eventlet' if os.getenv('FLASK_ENV') == 'production' else 'threading'
 
 # Initialize SocketIO
 socketio = SocketIO()
@@ -41,7 +46,7 @@ def create_app(config_name=None):
     socketio.init_app(
         app,
         cors_allowed_origins=app.config['SOCKETIO_CORS_ALLOWED_ORIGINS'],
-        async_mode='threading'
+        async_mode=_ASYNC_MODE
     )
 
     # Register blueprints

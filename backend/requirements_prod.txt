@@ -1,34 +1,35 @@
-# Production dependencies for Hugging Face Spaces deployment
-# Python 3.11 recommended (3.14 may have binary package gaps)
+# Production dependencies for Hugging Face Spaces (Docker, Python 3.11)
+# Used by: backend/Dockerfile
 
 # Web framework
 Flask==3.0.3
 Flask-CORS==4.0.1
 Flask-SocketIO==5.3.6
+python-socketio==5.11.4
 
-# WSGI server + async worker for SocketIO
+# WSGI server + eventlet worker for SocketIO
 gunicorn==22.0.0
 eventlet==0.36.1
 
-# Database
+# Database — psycopg2 for Neon.tech PostgreSQL
 SQLAlchemy==2.0.23
-psycopg2-binary==2.9.9
 Flask-SQLAlchemy==3.1.1
+psycopg2-binary==2.9.9
 
 # Auth
 bcrypt==4.1.2
 PyJWT==2.8.0
 
-# ML / Computer Vision
+# ML / Computer Vision (headless — no GUI)
 opencv-python-headless==4.9.0.80
-opencv-contrib-python-headless==4.9.0.80
 numpy==1.26.4
 Pillow==10.3.0
 
-# Face recognition (InsightFace ArcFace)
+# InsightFace ArcFace face recognition
 insightface==0.7.3
 onnxruntime==1.17.3
 
 # Utilities
 python-dotenv==1.0.1
 python-dateutil==2.9.0
+requests==2.31.0

@@ -14,9 +14,20 @@ class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
     DEBUG = os.getenv('FLASK_ENV', 'development') == 'development'
 
-    # Database — Neon.tech uses postgres:// scheme; SQLAlchemy needs postgresql+psycopg2://
+    # Database — handle all common URL formats:
+    #   postgres://...       → Neon/Heroku shorthand
+    #   postgresql://...     → standard format (defaults to psycopg2 in SA)
+    #   postgresql+psycopg2://... → explicit psycopg2
+    #   postgresql+psycopg://... → psycopg v3 (local dev)
     _raw_db_url = os.getenv('DATABASE_URL', 'postgresql+psycopg://sagarswain@localhost/attendance_system')
-    SQLALCHEMY_DATABASE_URI = _raw_db_url.replace('postgres://', 'postgresql+psycopg2://', 1)
+    if _raw_db_url.startswith('postgres://'):
+        # Neon/Heroku shorthand → psycopg2
+        SQLALCHEMY_DATABASE_URI = 'postgresql+psycopg2://' + _raw_db_url[len('postgres://'):]
+    elif _raw_db_url.startswith('postgresql://') and '+' not in _raw_db_url.split('?')[0].split('//')[0] + '//':
+        # Standard postgresql:// without explicit driver → add psycopg2
+        SQLALCHEMY_DATABASE_URI = _raw_db_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+    else:
+        SQLALCHEMY_DATABASE_URI = _raw_db_url
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = DEBUG
 

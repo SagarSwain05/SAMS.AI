@@ -30,4 +30,4 @@ CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", \
      "--bind", "0.0.0.0:7860", \
      "--timeout", "120", \
      "--log-level", "info", \
-     "run:app"]
+     "wsgi:app"]
