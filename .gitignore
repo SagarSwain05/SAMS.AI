@@ -1,0 +1,61 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/app/__pycache__/
+backend/app/**/__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+backend/.env
+frontend/.env
+.env
+.env.local
+.env.production
+
+# ML Models & Dataset (large binary files — excluded from git, deploy separately)
+backend/dataset/
+backend/models/face_recognizer.yml
+backend/models/face_labels.pkl
+backend/models_v2/
+backend/face_data/
+backend/app/ml/models/
+
+# Credentials (sensitive)
+credentials/
+
+# Node
+frontend/node_modules/
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+npm-debug.log*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database
+*.db
+*.sqlite
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
