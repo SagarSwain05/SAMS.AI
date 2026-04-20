@@ -1,0 +1,43 @@
+# Flask Web Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-SocketIO==5.3.5
+python-socketio==5.10.0
+
+# Database
+SQLAlchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.12.1
+
+# Computer Vision & AI/ML
+opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+scikit-learn>=1.3.0
+
+# Face Recognition V2 — InsightFace + ONNX Runtime
+# Confirmed working on Python 3.14: insightface 0.7.3, onnxruntime 1.24.4
+insightface>=0.7.3
+onnxruntime>=1.24.4      # CPU inference; swap for onnxruntime-gpu on CUDA hosts
+
+# Legacy face recognition (retained for LBPH/Haar kiosk fallback)
+# deepface and tensorflow are optional; comment out if not needed
+# deepface>=0.0.79
+# tensorflow>=2.13.0
+# mtcnn>=0.1.0
+# retina-face==0.0.13
+# keras==2.15.0
+
+# Security & Authentication
+bcrypt==4.1.1
+PyJWT==2.8.0
+
+# Utilities
+python-dotenv==1.0.0
+python-dateutil==2.8.2
+requests==2.31.0
+
+# Additional optional dependencies (enable if using legacy deepface pipeline)
+# retina-face==0.0.13
+# keras==2.15.0
