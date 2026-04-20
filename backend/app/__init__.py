@@ -99,8 +99,8 @@ def create_app(config_name=None):
         @app.route('/', defaults={'path': ''})
         @app.route('/<path:path>')
         def serve_frontend(path):
-            # API routes handled by blueprints — don't intercept
-            if path.startswith('api/'):
+            # Let API and SocketIO paths fall through to their handlers
+            if path.startswith(('api/', 'socket.io/')):
                 from flask import abort
                 abort(404)
             # Serve static assets (JS, CSS, images)

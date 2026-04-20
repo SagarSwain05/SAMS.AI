@@ -21,7 +21,8 @@ bcrypt==4.1.2
 PyJWT==2.8.0
 
 # ML / Computer Vision (headless — no GUI)
-opencv-python-headless==4.9.0.80
+# contrib version needed for legacy LBPH recognizer
+opencv-contrib-python-headless==4.9.0.80
 numpy==1.26.4
 Pillow==10.3.0
 
