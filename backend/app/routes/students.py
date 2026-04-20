@@ -8,6 +8,9 @@ import bcrypt
 import base64
 import cv2
 import numpy as np
+from datetime import datetime, timezone, timedelta
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 bp = Blueprint('students', __name__)
 
@@ -113,7 +116,7 @@ def my_schedule(current_user):
     if not stu or not stu.section_id:
         return jsonify({'message': 'Student profile or section not found'}), 404
 
-    now = datetime.now()
+    now = datetime.now(_IST)
     day = now.weekday()
     current_hm = now.strftime('%H:%M')
 

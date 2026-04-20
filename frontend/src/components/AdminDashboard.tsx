@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   LogOut, Users, Camera, Settings, UserPlus, Shield, BarChart3,
-  MonitorPlay, ScanFace, Home, Calendar, CheckCircle, TrendingUp, ClipboardList,
+  MonitorPlay, Monitor, ScanFace, Home, Calendar, CheckCircle, TrendingUp, ClipboardList,
   Users2, X, Eye, Lock, BookOpen, Briefcase, Phone, Mail,
 } from 'lucide-react';
 import { recognitionAPI } from '../services/api';
@@ -379,6 +379,9 @@ const SettingsTab: React.FC<{
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [modelLoading, setModelLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [seedStatus, setSeedStatus] = useState<{ running?: boolean; done?: boolean; inserted?: number; total?: number; error?: string } | null>(null);
+  const seedPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchModelInfo = async () => {
     setModelLoading(true);
@@ -400,7 +403,36 @@ const SettingsTab: React.FC<{
     } finally { setRefreshing(false); }
   };
 
-  useEffect(() => { fetchModelInfo(); }, []);
+  const triggerSeed = async () => {
+    setSeedLoading(true);
+    try {
+      await apiFetch('/admin/seed-attendance', { method: 'POST' });
+      toast.success('Attendance seeding started — this takes ~2 minutes');
+      // Start polling for status
+      if (seedPollRef.current) clearInterval(seedPollRef.current);
+      seedPollRef.current = setInterval(async () => {
+        try {
+          const s = await apiFetch('/admin/seed-status');
+          setSeedStatus(s);
+          if (s.done || s.error) {
+            clearInterval(seedPollRef.current!);
+            seedPollRef.current = null;
+            if (s.done) toast.success(`Seeded ${s.inserted?.toLocaleString()} attendance records!`);
+            if (s.error) toast.error(`Seed failed: ${s.error}`);
+          }
+        } catch { /* silent */ }
+      }, 3000);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSeedLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchModelInfo();
+    return () => { if (seedPollRef.current) clearInterval(seedPollRef.current); };
+  }, []);
 
   return (
     <div className="p-6 space-y-6">
@@ -508,6 +540,48 @@ const SettingsTab: React.FC<{
               {trainLoading ? 'Training…' : 'Train LBPH Model'}
             </button>
           </div>
+        </div>
+
+        {/* Seed Attendance Data */}
+        <div className="bg-white border-2 border-amber-200 rounded-xl p-6 space-y-4 md:col-span-2">
+          <h3 className="text-lg font-semibold text-gray-900">Seed Analytics Data</h3>
+          <p className="text-sm text-gray-500">
+            Generate 3 months of realistic attendance data (Feb–Apr 2026) for all 675 students.
+            This populates analytics charts with realistic present/absent/late distributions.
+            Safe to run multiple times — previous seeded data is replaced.
+          </p>
+
+          {seedStatus && !seedStatus.done && !seedStatus.error && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>Inserting records…</span>
+                <span>{seedStatus.inserted?.toLocaleString()} / {seedStatus.total?.toLocaleString()}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-amber-500 h-2 rounded-full transition-all"
+                  style={{ width: `${seedStatus.total ? Math.round((seedStatus.inserted || 0) / seedStatus.total * 100) : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {seedStatus?.done && (
+            <p className="text-sm text-green-600 font-medium">
+              ✓ Done — {seedStatus.inserted?.toLocaleString()} records seeded. Refresh Analytics tab to see data.
+            </p>
+          )}
+          {seedStatus?.error && (
+            <p className="text-sm text-red-500">Error: {seedStatus.error}</p>
+          )}
+
+          <button
+            onClick={triggerSeed}
+            disabled={seedLoading || (seedStatus?.running ?? false)}
+            className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg
+                       transition-all disabled:opacity-50 text-sm font-semibold"
+          >
+            {seedLoading || seedStatus?.running ? 'Seeding in progress…' : 'Seed 3 Months Attendance Data'}
+          </button>
         </div>
       </div>
     </div>
@@ -1001,6 +1075,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                   Start the campus-wide recognition server — attendance marks automatically per timetable.
                 </p>
               </div>
+              {/* Kiosk quick-link */}
+              <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
+                <Monitor className="h-5 w-5 text-indigo-600 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-indigo-800">Public Attendance Kiosk</p>
+                  <p className="text-xs text-indigo-500">Display at entrance — shows live face recognition feed for walk-up attendance</p>
+                </div>
+                <a
+                  href="/kiosk"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-shrink-0 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  Open Kiosk
+                </a>
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Camera feed */}
                 <div className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">

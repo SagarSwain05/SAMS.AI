@@ -1,8 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Users, CheckCircle, Clock, Wifi, WifiOff } from 'lucide-react';
+/**
+ * RecognitionKiosk — Public attendance display terminal
+ *
+ * Dual role:
+ *   1. Display: shows annotated server MJPEG feed (faces + names) + attendance list
+ *   2. Camera source: when server is in headless mode, captures webcam frames
+ *      and sends to IoT endpoint so recognition runs on this device's camera
+ */
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Camera, Users, CheckCircle, Clock, Wifi, WifiOff, Video } from 'lucide-react';
 import { io } from 'socket.io-client';
 
-import { SOCKET_URL as BACKEND } from '../config';
+import { SOCKET_URL as BACKEND, API_BASE } from '../config';
 
 interface Attendee { name: string; roll_number: string; }
 
@@ -15,6 +23,8 @@ interface PublicStatus {
   present_count?: number;
   recent_attendees?: Attendee[];
   message?: string;
+  headless?: boolean;
+  iot_endpoint?: string;
 }
 
 const RecognitionKiosk: React.FC = () => {
@@ -22,40 +32,108 @@ const RecognitionKiosk: React.FC = () => {
   const [isConnected, setIsConnected] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [lastUpdate, setLastUpdate]   = useState(new Date());
-  const pollRef   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const socketRef = useRef<ReturnType<typeof io> | null>(null);
+  const [webcamActive, setWebcamActive] = useState(false);
 
-  // Poll V2 public status every 3 s
-  useEffect(() => {
-    const poll = async () => {
-      try {
-        const res = await fetch(`${BACKEND}/api/v2/recognition/public_status`);
-        const data: PublicStatus = await res.json();
-        setStatus(data);
-        setIsConnected(true);
-        if (data.active) setLastUpdate(new Date());
-      } catch {
-        setIsConnected(false);
+  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const socketRef     = useRef<ReturnType<typeof io> | null>(null);
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const streamRef     = useRef<MediaStream | null>(null);
+  const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const iotRef        = useRef<string | null>(null);
+
+  // ── Webcam streaming (background — sends frames to server's IoT endpoint) ──
+
+  const stopWebcam = useCallback(() => {
+    if (frameTimerRef.current) { clearInterval(frameTimerRef.current); frameTimerRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (videoRef.current) videoRef.current.srcObject = null;
+    iotRef.current = null;
+    setWebcamActive(false);
+  }, []);
+
+  const startWebcam = useCallback(async (endpoint: string) => {
+    if (streamRef.current) return; // already running
+    iotRef.current = endpoint;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
       }
-    };
+      setWebcamActive(true);
+
+      // Send frames at 2fps — enough for ArcFace recognition
+      frameTimerRef.current = setInterval(async () => {
+        const video  = videoRef.current;
+        const canvas = canvasRef.current;
+        const ep     = iotRef.current;
+        if (!video || !canvas || !ep || video.readyState < 2) return;
+
+        canvas.width  = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, 640, 480);
+
+        canvas.toBlob(async (blob) => {
+          if (!blob) return;
+          try {
+            const form = new FormData();
+            form.append('frame', blob, 'frame.jpg');
+            await fetch(`${API_BASE}${ep}`, { method: 'POST', body: form });
+          } catch { /* best effort */ }
+        }, 'image/jpeg', 0.72);
+      }, 500);
+
+    } catch (err: any) {
+      console.warn('Kiosk webcam:', err.message);
+      // Silent fail — display still works from server MJPEG
+    }
+  }, []);
+
+  // ── Polling + socket ────────────────────────────────────────────────────────
+
+  const poll = useCallback(async () => {
+    try {
+      const res  = await fetch(`${BACKEND}/api/v2/recognition/public_status`);
+      const data: PublicStatus = await res.json();
+      setStatus(data);
+      setIsConnected(true);
+      if (data.active) setLastUpdate(new Date());
+
+      // Auto-start webcam when server enters headless mode
+      if (data.active && data.iot_endpoint && !streamRef.current) {
+        startWebcam(data.iot_endpoint);
+      }
+      // Stop webcam when session ends
+      if (!data.active && streamRef.current) {
+        stopWebcam();
+      }
+    } catch {
+      setIsConnected(false);
+    }
+  }, [startWebcam, stopWebcam]);
+
+  useEffect(() => {
     poll();
     pollRef.current = setInterval(poll, 3000);
 
-    // Register kiosk as recognition watcher so backend auto-stops when kiosk closes
     const sock = io(BACKEND, { transports: ['websocket', 'polling'] });
     sock.on('connect', () => { sock.emit('watch_recognition'); });
     socketRef.current = sock;
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
-      if (socketRef.current) {
-        socketRef.current.emit('unwatch_recognition');
-        socketRef.current.disconnect();
-      }
+      if (socketRef.current) { socketRef.current.emit('unwatch_recognition'); socketRef.current.disconnect(); }
+      stopWebcam();
     };
   }, []);
 
-  // Clock
+  // ── Clock ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(t);
@@ -64,6 +142,7 @@ const RecognitionKiosk: React.FC = () => {
   const fmtTime = (d: Date) => d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const fmtDate = (d: Date) => d.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  // Server MJPEG feed — shows annotated faces with names/boxes from AI processing
   const feedUrl = status.active && status.live_feed_url
     ? `${BACKEND}${status.live_feed_url}`
     : null;
@@ -72,7 +151,7 @@ const RecognitionKiosk: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-indigo-900 to-purple-900 text-white flex flex-col">
       {/* Header */}
       <div className="bg-black/40 backdrop-blur-md border-b border-white/10">
-        <div className="px-8 py-4 flex items-center justify-between">
+        <div className="px-8 py-4 flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
             <div className="p-3 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl">
               <Camera className="h-10 w-10" />
@@ -90,15 +169,23 @@ const RecognitionKiosk: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-8">
+          <div className="flex items-center gap-6 flex-wrap">
             {/* Connection */}
             <div className="flex items-center gap-2">
               {isConnected
-                ? <><Wifi className="h-6 w-6 text-green-400" /><span className="text-sm text-green-400">Connected</span></>
-                : <><WifiOff className="h-6 w-6 text-red-400" /><span className="text-sm text-red-400">Disconnected</span></>}
+                ? <><Wifi className="h-5 w-5 text-green-400" /><span className="text-sm text-green-400">Connected</span></>
+                : <><WifiOff className="h-5 w-5 text-red-400" /><span className="text-sm text-red-400">Disconnected</span></>}
             </div>
 
-            {/* Session status badge */}
+            {/* Webcam sending indicator */}
+            {webcamActive && (
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-cyan-500/20 border border-cyan-400/40 rounded-full">
+                <Video className="h-4 w-4 text-cyan-400 animate-pulse" />
+                <span className="text-xs text-cyan-300 font-medium">Sending frames</span>
+              </div>
+            )}
+
+            {/* Session status */}
             <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-white/10 border border-white/20">
               {status.active ? (
                 <>
@@ -119,33 +206,41 @@ const RecognitionKiosk: React.FC = () => {
 
             {/* Clock */}
             <div className="text-right">
-              <div className="text-3xl font-bold tabular-nums">{fmtTime(currentTime)}</div>
-              <div className="text-sm text-gray-300">{fmtDate(currentTime)}</div>
+              <div className="text-2xl font-bold tabular-nums">{fmtTime(currentTime)}</div>
+              <div className="text-xs text-gray-300">{fmtDate(currentTime)}</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main */}
+      {/* Main content */}
       <div className="flex-1 p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full min-h-[calc(100vh-200px)]">
-          {/* Camera Feed */}
+
+          {/* Primary display: Server annotated feed (shows recognized faces with boxes + names) */}
           <div className="lg:col-span-2 bg-black/40 backdrop-blur-md rounded-2xl border-2 border-white/10 overflow-hidden flex flex-col">
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Camera className="h-6 w-6" />
-                <span className="font-semibold text-lg">Live Feed</span>
+                <span className="font-semibold text-lg">Live Recognition Feed</span>
               </div>
-              {status.active && (
-                <span className="px-3 py-1 bg-white/20 rounded-full text-sm">Recording</span>
-              )}
+              <div className="flex items-center gap-2">
+                {webcamActive && (
+                  <span className="text-xs bg-cyan-500/30 text-cyan-300 px-2 py-0.5 rounded-full">
+                    Webcam → Server
+                  </span>
+                )}
+                {status.active && (
+                  <span className="px-3 py-1 bg-white/20 rounded-full text-sm">Recording</span>
+                )}
+              </div>
             </div>
 
-            <div className="flex-1 relative bg-gray-900 flex items-center justify-center">
+            <div className="flex-1 relative bg-gray-900 flex items-center justify-center min-h-[300px]">
               {feedUrl ? (
                 <img
                   src={feedUrl}
-                  alt="Live Camera Feed"
+                  alt="Live Recognition Feed"
                   className="w-full h-full object-contain"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
@@ -160,10 +255,27 @@ const RecognitionKiosk: React.FC = () => {
                   </p>
                 </div>
               )}
+
+              {/* Small webcam preview (bottom-right corner) when sending frames */}
+              {webcamActive && (
+                <div className="absolute bottom-3 right-3 w-32 h-24 rounded-lg overflow-hidden border-2 border-cyan-400/60 shadow-lg">
+                  <video
+                    ref={videoRef}
+                    autoPlay muted playsInline
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute top-0 left-0 right-0 bg-cyan-600/80 text-white text-xs text-center py-0.5">
+                    Your cam
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* Hidden canvas for frame capture */}
+            <canvas ref={canvasRef} className="hidden" />
           </div>
 
-          {/* Attendance Panel */}
+          {/* Attendance panel */}
           <div className="bg-black/40 backdrop-blur-md rounded-2xl border-2 border-white/10 overflow-hidden flex flex-col">
             <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -186,7 +298,9 @@ const RecognitionKiosk: React.FC = () => {
                 <div className="text-center py-12">
                   <Clock className="h-16 w-16 mx-auto mb-4 text-gray-600 animate-pulse" />
                   <p className="text-gray-400">Scanning for faces...</p>
-                  <p className="text-sm text-gray-500 mt-2">Please face the camera</p>
+                  <p className="text-sm text-gray-500 mt-2">
+                    {webcamActive ? 'Look at the camera to mark attendance' : 'Please face the camera'}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -207,7 +321,6 @@ const RecognitionKiosk: React.FC = () => {
               )}
             </div>
 
-            {/* Last update footer */}
             <div className="px-6 py-3 bg-white/5 border-t border-white/10">
               <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
                 <Clock className="h-4 w-4" />

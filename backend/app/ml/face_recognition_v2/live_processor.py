@@ -370,6 +370,9 @@ class ClassroomStreamProcessor:
         self.recognition_interval = recognition_interval
         self.college_mode = college_mode
 
+        # Headless mode: no physical camera — frames are pushed via IoT endpoint
+        self._headless: bool = False
+
         self._source: str | int | None     = None
         self._section_id: Optional[int]    = None
         self._subject_id: Optional[int]    = None
@@ -440,28 +443,48 @@ class ClassroomStreamProcessor:
         # the background recognition thread touches it (fixes "all Unknown" bug).
         self._pipeline.store.load_from_db()
 
-        # Claim the physical camera device before opening VideoCapture.
-        # This forces the old CameraStream to release VideoCapture(0) so we
-        # never have two simultaneous readers on the same device (SIGSEGV risk).
-        try:
-            from app.ml.camera import set_v2_camera_active
-            set_v2_camera_active(True)
-        except Exception:
-            pass
+        # Detect headless mode: source == 'headless' OR source is None
+        # In headless mode the session runs without a physical camera.
+        # Frames are pushed externally via POST /api/v2/recognition/iot_frame/<section_id>
+        self._headless = (source == 'headless' or source is None)
 
-        if not self._open_capture(source):
+        if not self._headless:
+            # Claim the physical camera device before opening VideoCapture.
+            # This forces the old CameraStream to release VideoCapture(0) so we
+            # never have two simultaneous readers on the same device (SIGSEGV risk).
             try:
                 from app.ml.camera import set_v2_camera_active
-                set_v2_camera_active(False)
+                set_v2_camera_active(True)
             except Exception:
                 pass
-            return {'success': False, 'error': f'Cannot open camera source: {source}'}
+
+            if not self._open_capture(source):
+                # Camera unavailable — fall back to headless mode automatically
+                logger.warning(
+                    "Camera source %s unavailable — falling back to headless mode "
+                    "(frames accepted via POST /api/v2/recognition/iot_frame/%d)",
+                    source, section_id,
+                )
+                self._headless = True
+                try:
+                    from app.ml.camera import set_v2_camera_active
+                    set_v2_camera_active(False)
+                except Exception:
+                    pass
 
         self._session_active = True
 
-        self._capture_thread = threading.Thread(
-            target=self._capture_loop,
-            name=f'cap-sec{section_id}', daemon=True)
+        if self._headless:
+            # Headless: use a lightweight stub capture thread that just waits for
+            # frames pushed via _frame_event (IoT frame endpoint or webcam upload)
+            self._capture_thread = threading.Thread(
+                target=self._headless_capture_loop,
+                name=f'cap-headless-sec{section_id}', daemon=True)
+        else:
+            self._capture_thread = threading.Thread(
+                target=self._capture_loop,
+                name=f'cap-sec{section_id}', daemon=True)
+
         self._stream_thread = threading.Thread(
             target=self._stream_loop,
             name=f'stream-sec{section_id}', daemon=True)
@@ -476,10 +499,12 @@ class ClassroomStreamProcessor:
         logger.info("Session started | section=%d subject=%d source=%s college_mode=%s",
                     section_id, subject_id, source, self.college_mode)
         return {
-            'success':    True,
-            'section_id': section_id,
-            'subject_id': subject_id,
-            'started_at': self._session_start.isoformat(),
+            'success':     True,
+            'section_id':  section_id,
+            'subject_id':  subject_id,
+            'started_at':  self._session_start.isoformat(),
+            'headless':    self._headless,
+            'iot_endpoint': f'/api/v2/recognition/iot_frame/{section_id}' if self._headless else None,
         }
 
     def stop_session(self) -> dict:
@@ -509,8 +534,9 @@ class ClassroomStreamProcessor:
         # wait here (up to 8 s — enough for ONNX inference to finish if it
         # started just before stop was requested).
         if self._capture_thread and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=8.0)
-            if self._capture_thread.is_alive():
+            timeout = 2.0 if self._headless else 8.0
+            self._capture_thread.join(timeout=timeout)
+            if not self._headless and self._capture_thread.is_alive():
                 # Thread did not exit in time — last-resort release.
                 # At this point the capture thread is stuck (camera hung),
                 # so calling release() is the only remaining option.
@@ -597,6 +623,37 @@ class ClassroomStreamProcessor:
         self._pending_review = [
             i for i in self._pending_review if i.get('id') != item_id
         ]
+
+    # ── Thread 1a: Headless Capture (keep-alive for no-camera deployments) ────
+
+    def _headless_capture_loop(self) -> None:
+        """
+        Lightweight keep-alive loop used when no physical camera is available.
+        - Stays alive until _stop_event is set so is_active returns True.
+        - Does NOT interact with _frame_event (let recognition_loop handle it).
+        - Frames arrive from the IoT endpoint (/api/v2/recognition/iot_frame/<id>)
+          which writes directly to _latest_frame and sets _frame_event.
+        - A one-time placeholder frame is set so the MJPEG stream shows
+          something before the first real frame arrives.
+        """
+        logger.info("Headless capture loop started — awaiting pushed frames via IoT endpoint")
+
+        # Prime a static placeholder so the stream is not empty
+        placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(placeholder, "Recognition Server ACTIVE",
+                    (100, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 100), 2, cv2.LINE_AA)
+        cv2.putText(placeholder, "Send frames via client webcam",
+                    (80, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2, cv2.LINE_AA)
+        with self._frame_lock:
+            if self._latest_frame is None:
+                self._latest_frame = placeholder
+        self._frame_event.set()   # wake stream_loop once so it renders the placeholder
+
+        # Just stay alive — external frames are pushed by IoT endpoint directly
+        while not self._stop_event.is_set():
+            self._stop_event.wait(timeout=1.0)
+
+        logger.info("Headless capture loop stopped")
 
     # ── Thread 1: Capture (reads frames as fast as camera allows) ──────────
 

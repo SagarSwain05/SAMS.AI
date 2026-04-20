@@ -55,6 +55,7 @@ def create_app(config_name=None):
     from .routes import timetable
     from .routes import teachers as teachers_route
     from .routes.users import bp_branches, bp_sections, bp_users
+    from .routes import admin as admin_route
 
     app.register_blueprint(auth.bp, url_prefix='/api/auth')
     app.register_blueprint(students.bp, url_prefix='/api/students')
@@ -68,6 +69,7 @@ def create_app(config_name=None):
     app.register_blueprint(bp_branches, url_prefix='/api/branches')
     app.register_blueprint(bp_sections, url_prefix='/api/sections')
     app.register_blueprint(bp_users,    url_prefix='/api/users')
+    app.register_blueprint(admin_route.bp, url_prefix='/api/admin')
 
     # Register SocketIO events
     from . import sockets
