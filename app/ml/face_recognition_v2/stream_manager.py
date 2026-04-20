@@ -207,10 +207,17 @@ class MultiCameraStreamManager:
                 session_info=session_info,
             )
 
-        logger.info("College session started | source=%s", source)
-        self._emit('college_session_started', {'source': str(source)})
-        return {'success': True, 'message': 'College recognition server started',
-                'live_feed_url': '/api/v2/recognition/live_feed/0'}
+        headless = result.get('headless', False)
+        logger.info("College session started | source=%s headless=%s", source, headless)
+        self._emit('college_session_started', {'source': str(source), 'headless': headless})
+        return {
+            'success': True,
+            'message': 'College recognition server started',
+            'live_feed_url': '/api/v2/recognition/live_feed/0',
+            'headless': headless,
+            'iot_endpoint': '/api/v2/recognition/iot_frame/0' if headless else None,
+            'mode': 'headless (no server camera — send frames via webcam)' if headless else 'camera',
+        }
 
     def is_college_session_active(self) -> bool:
         with self._lock:

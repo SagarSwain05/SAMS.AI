@@ -380,6 +380,11 @@ def public_status():
                     'roll_number': student.roll_number,
                 })
 
+        # Check if session is headless (no server camera — client pushes frames)
+        with manager._lock:
+            entry = manager._streams.get(section_id)
+        is_headless = entry.processor._headless if entry else False
+
         session_info = first.get('session_info', {})
         return jsonify({
             'active':        True,
@@ -389,6 +394,8 @@ def public_status():
             'live_feed_url': f'/api/v2/recognition/live_feed/{section_id}',
             'present_count': len(status.get('present', [])),
             'recent_attendees': confirmed_names[-10:],  # last 10
+            'headless':      is_headless,
+            'iot_endpoint':  f'/v2/recognition/iot_frame/{section_id}' if is_headless else None,
         }), 200
 
     except Exception as exc:

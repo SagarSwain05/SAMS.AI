@@ -11,7 +11,10 @@ GET  /api/timetable/teachers           — list teachers (optionally ?branch_id=
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Indian Standard Time = UTC+5:30
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 from flask import Blueprint, jsonify, request
 
@@ -48,7 +51,7 @@ def current_timetable(current_user):
     Return the schedule entry currently running for EVERY section,
     based on real wall-clock time.
     """
-    now = datetime.now()
+    now = datetime.now(_IST)
     day = now.weekday()          # 0=Mon .. 4=Fri
     current_hm = now.strftime('%H:%M')
 

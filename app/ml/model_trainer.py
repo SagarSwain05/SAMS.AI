@@ -188,7 +188,12 @@ class ModelTrainer:
         faces_dict = self.load_all_student_faces()
 
         if not faces_dict:
-            raise ValueError("No training data found")
+            raise ValueError(
+                "No training data found for LBPH model. "
+                "This system uses InsightFace ArcFace for recognition — "
+                "use POST /api/v2/recognition/enroll to enroll student faces, "
+                "or POST /api/v2/recognition/embeddings/refresh to reload embeddings."
+            )
 
         print(f"Loaded images for {len(faces_dict)} students")
 
