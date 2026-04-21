@@ -82,8 +82,9 @@ const RecognitionKiosk: React.FC = () => {
 
       setWebcamActive(true);
 
-      // Send frames at 2fps — enough for ArcFace recognition
-      frameTimerRef.current = setInterval(() => {
+      // Send frames at 2fps — enough for ArcFace recognition.
+      // Base64 JSON is more reliable than multipart on HF Spaces cloud.
+      frameTimerRef.current = setInterval(async () => {
         const video  = videoRef.current;
         const canvas = canvasRef.current;
         const ep     = iotRef.current;
@@ -95,14 +96,14 @@ const RecognitionKiosk: React.FC = () => {
         if (!ctx) return;
         ctx.drawImage(video, 0, 0, 640, 480);
 
-        canvas.toBlob(async (blob) => {
-          if (!blob) return;
-          try {
-            const form = new FormData();
-            form.append('frame', blob, 'frame.jpg');
-            await fetch(`${API_BASE}${ep}`, { method: 'POST', body: form });
-          } catch { /* best effort */ }
-        }, 'image/jpeg', 0.72);
+        const base64 = canvas.toDataURL('image/jpeg', 0.6);
+        try {
+          await fetch(`${API_BASE}${ep}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ frame: base64 }),
+          });
+        } catch { /* best effort */ }
       }, 500);
 
     } catch (err: any) {

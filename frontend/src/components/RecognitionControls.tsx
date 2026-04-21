@@ -156,8 +156,10 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
 
       setStreaming(true);
 
-      // Send a frame every 500 ms (2 fps is sufficient for ArcFace recognition)
-      frameTimerRef.current = setInterval(() => {
+      // Send a frame every 500 ms (2 fps is sufficient for ArcFace recognition).
+      // Uses base64 JSON rather than multipart/form-data — more reliable on cloud
+      // deployments where multipart parsing can sometimes be mis-handled.
+      frameTimerRef.current = setInterval(async () => {
         const video = videoRef.current;
         const canvas = canvasRef.current;
         const ep = iotEndpointRef.current;
@@ -169,19 +171,17 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
         if (!ctx) return;
         ctx.drawImage(video, 0, 0, 640, 480);
 
-        canvas.toBlob(async (blob) => {
-          if (!blob) return;
-          try {
-            const form = new FormData();
-            form.append('frame', blob, 'frame.jpg');
-            await fetch(`${API}${ep}`, {
-              method: 'POST',
-              headers: authHeader(),
-              body: form,
-            });
-            setFrameCount(c => c + 1);
-          } catch { /* silent — best effort */ }
-        }, 'image/jpeg', 0.7);
+        // toDataURL is synchronous — avoids async toBlob callback timing issues
+        const base64 = canvas.toDataURL('image/jpeg', 0.6);
+        try {
+          const res = await fetch(`${API}${ep}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader() },
+            body: JSON.stringify({ frame: base64 }),
+          });
+          // Only count as "sent" when server confirms receipt
+          if (res.ok) setFrameCount(c => c + 1);
+        } catch { /* silent — best effort */ }
       }, 500);
 
       toast.success('Webcam connected — sending frames for recognition');

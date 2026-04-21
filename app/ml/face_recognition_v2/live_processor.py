@@ -19,8 +19,11 @@ import time
 import uuid
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from typing import Optional
+
+# HF Spaces / gunicorn runs on UTC. Force IST for all schedule checks and display.
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 import cv2
 import numpy as np
@@ -189,7 +192,7 @@ class FrameAnnotator:
 
         # ── Top banner ─────────────────────────────────────────────────────
         cv2.rectangle(out, (0, 0), (w, cls.BANNER_H), (20, 20, 20), -1)
-        ts = datetime.now().strftime('%H:%M:%S')
+        ts = datetime.now(_IST).strftime('%H:%M:%S')  # IST — HF Spaces runs UTC
         if session_info:
             banner = (f"{session_info.get('section','Campus')} | "
                       f"{session_info.get('subject','Auto')} | {ts}")
@@ -864,8 +867,10 @@ class ClassroomStreamProcessor:
         recognized students show on screen but NO attendance is written.
         This runs in the recognition thread (already inside app context via write_attendance).
         """
-        from datetime import datetime as _dt
-        now = _dt.now()
+        # Use IST — HF Spaces / cloud servers run on UTC.
+        # datetime.now() without tz would give UTC, making a 9 AM IST class
+        # appear as 3:30 AM and never match any teaching slot.
+        now = datetime.now(_IST)
         day = now.weekday()   # 0=Mon..6=Sun
         is_weekend = day >= 5
 
@@ -1033,16 +1038,17 @@ class ClassroomStreamProcessor:
 
         # Final safety check — never write attendance on weekends regardless of
         # how we got here (belt-and-suspenders, main guard is _tag_schedule_status).
-        if datetime.now().weekday() >= 5:
-            logger.info("_write_attendance: weekend guard — refusing to write %s", student_ids)
+        if datetime.now(_IST).weekday() >= 5:
+            logger.info("_write_attendance: weekend guard (IST) — refusing to write %s", student_ids)
             return
 
         flask_app = getattr(self._pipeline.store, '_flask_app', None)
 
         def _do_write():
             from app.models import db, AttendanceLog
-            today = date.today()
-            now   = datetime.utcnow()
+            now_ist = datetime.now(_IST)   # Use IST for date and time columns
+            today   = now_ist.date()       # IST date (avoids UTC midnight edge-case)
+            now     = now_ist              # time() will be IST local time
             newly_written: list[int] = []   # track who was queued this batch
 
             logger.info("_write_attendance: processing %d students: %s", len(student_ids), student_ids)
@@ -1154,8 +1160,9 @@ class ClassroomStreamProcessor:
                     )
                     return None
 
-            # Use LOCAL wall-clock time — TimeSlot strings are stored in local time
-            now = datetime.now()
+            # Use IST — slot strings in DB are stored in IST (10:00, 11:00, …).
+            # datetime.now() on HF Spaces returns UTC (offset by -5:30).
+            now = datetime.now(_IST)
             # weekday() → 0=Mon .. 4=Fri; skip weekends
             day = now.weekday()
             if day > 4:
