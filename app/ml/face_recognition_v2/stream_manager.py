@@ -215,7 +215,7 @@ class MultiCameraStreamManager:
             'message': 'College recognition server started',
             'live_feed_url': '/api/v2/recognition/live_feed/0',
             'headless': headless,
-            'iot_endpoint': '/api/v2/recognition/iot_frame/0' if headless else None,
+            'iot_endpoint': '/v2/recognition/iot_frame/0' if headless else None,
             'mode': 'headless (no server camera — send frames via webcam)' if headless else 'camera',
         }
 
