@@ -4,6 +4,11 @@
  * Supports two modes:
  *   1. Camera mode (localhost): server opens local webcam
  *   2. Headless mode (cloud):   client sends webcam frames via IoT endpoint
+ *
+ * Key fix: <video> and <canvas> refs are ALWAYS in the DOM (hidden elements).
+ * Previously they were inside conditional renders, so videoRef.current was null
+ * when getUserMedia resolved → srcObject never set → readyState always 0 →
+ * toBlob never called → "0 frames sent" forever.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Square, Radio, Users, Clock, Camera, Upload } from 'lucide-react';
@@ -47,15 +52,29 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
 
   const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const socketRef    = useRef<ReturnType<typeof io> | null>(null);
+
+  // CRITICAL: These refs must be on elements that are ALWAYS in the DOM.
+  // If placed inside a conditional render, videoRef.current is null when
+  // getUserMedia resolves → srcObject is never set → readyState stays 0 →
+  // canvas.toBlob is never called → "0 frames sent" forever.
   const videoRef     = useRef<HTMLVideoElement>(null);
   const canvasRef    = useRef<HTMLCanvasElement>(null);
+
   const streamRef    = useRef<MediaStream | null>(null);
   const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const iotEndpointRef = useRef<string | null>(null);  // stable ref for interval closure
 
   const fetchStatus = async (silent = false) => {
     try {
       const d = await apiFetch('/v2/recognition/college/status');
       setStatus(d);
+      // Auto-reconnect webcam if server is already running in headless mode
+      // (handles page refresh / tab navigation / component remount)
+      if (d.college_session_active && d.headless && d.iot_endpoint && !streamRef.current) {
+        setIsHeadless(true);
+        setIotEndpoint(d.iot_endpoint);
+        startWebcamStream(d.iot_endpoint);
+      }
     } catch {
       if (!silent) setStatus(null);
     }
@@ -111,6 +130,11 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
+    // Clear srcObject on the always-present hidden video
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    iotEndpointRef.current = null;
     setStreaming(false);
     setFrameCount(0);
   }, []);
@@ -119,17 +143,25 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
       streamRef.current = stream;
+      iotEndpointRef.current = endpoint;
+
+      // videoRef is on a hidden element ALWAYS in the DOM — guaranteed non-null here.
+      // This was the core bug: previously the video was inside a conditional render
+      // so videoRef.current was null → srcObject never set → readyState = 0 → no frames.
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        // autoPlay attribute starts playback; explicit play() as fallback
+        videoRef.current.play().catch(() => {});
       }
+
       setStreaming(true);
 
-      // Send a frame every 500ms (2fps is enough for recognition)
-      frameTimerRef.current = setInterval(async () => {
+      // Send a frame every 500 ms (2 fps is sufficient for ArcFace recognition)
+      frameTimerRef.current = setInterval(() => {
         const video = videoRef.current;
         const canvas = canvasRef.current;
-        if (!video || !canvas || video.readyState < 2) return;
+        const ep = iotEndpointRef.current;
+        if (!video || !canvas || !ep || video.readyState < 2) return;
 
         canvas.width  = 640;
         canvas.height = 480;
@@ -142,7 +174,7 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
           try {
             const form = new FormData();
             form.append('frame', blob, 'frame.jpg');
-            await fetch(`${API}${endpoint}`, {
+            await fetch(`${API}${ep}`, {
               method: 'POST',
               headers: authHeader(),
               body: form,
@@ -209,6 +241,15 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
 
   return (
     <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200 space-y-6">
+
+      {/*
+        ALWAYS-PRESENT hidden elements for webcam frame capture.
+        These must live OUTSIDE all conditional renders so their refs are
+        valid the moment getUserMedia resolves.
+      */}
+      <video ref={videoRef} autoPlay muted playsInline className="hidden" aria-hidden="true" />
+      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -277,7 +318,7 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
         </div>
       )}
 
-      {/* Headless mode: webcam preview */}
+      {/* Headless mode: webcam preview panel */}
       {isActive && isHeadless && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -291,9 +332,23 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
               </span>
             )}
           </div>
+
           {streaming ? (
             <div className="relative rounded overflow-hidden bg-black" style={{ aspectRatio: '4/3' }}>
-              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+              {/*
+                Display video — separate from the hidden capture video.
+                The ref callback sets srcObject from streamRef when this element
+                is first mounted (after setStreaming(true) triggers the render).
+              */}
+              <video
+                autoPlay muted playsInline
+                className="w-full h-full object-cover"
+                ref={(el) => {
+                  if (el && streamRef.current && !el.srcObject) {
+                    el.srcObject = streamRef.current;
+                  }
+                }}
+              />
               <span className="absolute top-2 left-2 bg-red-600 text-white text-xs px-2 py-0.5 rounded font-bold animate-pulse">
                 LIVE
               </span>
@@ -308,7 +363,6 @@ const RecognitionControls: React.FC<RecognitionControlsProps> = ({
               <p className="text-xs text-gray-500">Frames are sent to the recognition server for processing</p>
             </div>
           )}
-          <canvas ref={canvasRef} className="hidden" />
         </div>
       )}
 

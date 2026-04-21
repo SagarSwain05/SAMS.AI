@@ -11,7 +11,7 @@ from flask import request
 # ── Recognition watcher tracking ─────────────────────────────────────────────
 _watcher_sids: set = set()
 _grace_timer: threading.Timer | None = None
-_GRACE_SECONDS = 8   # seconds to wait before stopping (survives page refresh)
+_GRACE_SECONDS = 300  # 5 minutes — survives page refresh, tab navigation, network hiccups
 
 
 def _cancel_grace():

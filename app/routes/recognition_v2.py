@@ -702,9 +702,15 @@ def college_session_status(current_user):
     result  = {'college_session_active': active}
     if active:
         snap = manager.get_attendance_status(0) or {}
+        # Return headless state so frontend can auto-reconnect webcam after page reload
+        with manager._lock:
+            entry = manager._streams.get(0)
+        is_headless = entry.processor._headless if entry else False
         result.update({
             'present_count':  len(snap.get('present', [])),
             'uptime_seconds': snap.get('uptime_seconds', 0),
             'live_feed_url':  '/api/v2/recognition/live_feed/0',
+            'headless':       is_headless,
+            'iot_endpoint':   '/v2/recognition/iot_frame/0' if is_headless else None,
         })
     return jsonify(result), 200

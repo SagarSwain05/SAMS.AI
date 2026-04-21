@@ -5,6 +5,11 @@
  *   1. Display: shows annotated server MJPEG feed (faces + names) + attendance list
  *   2. Camera source: when server is in headless mode, captures webcam frames
  *      and sends to IoT endpoint so recognition runs on this device's camera
+ *
+ * Key fix: <video ref={videoRef}> and <canvas ref={canvasRef}> are ALWAYS in the DOM.
+ * Previously the video was inside {webcamActive && (...)} so videoRef.current was null
+ * when getUserMedia resolved → srcObject never set → readyState = 0 →
+ * toBlob never called → no frames ever sent to server.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, Users, CheckCircle, Clock, Wifi, WifiOff, Video } from 'lucide-react';
@@ -36,8 +41,14 @@ const RecognitionKiosk: React.FC = () => {
 
   const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null);
   const socketRef     = useRef<ReturnType<typeof io> | null>(null);
-  const videoRef      = useRef<HTMLVideoElement>(null);
-  const canvasRef     = useRef<HTMLCanvasElement>(null);
+
+  // CRITICAL: These refs must be on elements ALWAYS in the DOM.
+  // Previously videoRef was inside {webcamActive && (...)} which meant
+  // videoRef.current was null when getUserMedia resolved. The stream was obtained
+  // but srcObject was never set → readyState = 0 → toBlob never called → 0 frames.
+  const videoRef      = useRef<HTMLVideoElement>(null);   // hidden capture element
+  const canvasRef     = useRef<HTMLCanvasElement>(null);  // hidden frame extraction
+
   const streamRef     = useRef<MediaStream | null>(null);
   const frameTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iotRef        = useRef<string | null>(null);
@@ -47,7 +58,7 @@ const RecognitionKiosk: React.FC = () => {
   const stopWebcam = useCallback(() => {
     if (frameTimerRef.current) { clearInterval(frameTimerRef.current); frameTimerRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    if (videoRef.current) videoRef.current.srcObject = null;
+    if (videoRef.current) { videoRef.current.srcObject = null; }
     iotRef.current = null;
     setWebcamActive(false);
   }, []);
@@ -60,14 +71,19 @@ const RecognitionKiosk: React.FC = () => {
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
       });
       streamRef.current = stream;
+
+      // videoRef is on a hidden element ALWAYS in the DOM — guaranteed non-null.
+      // This is the critical fix: srcObject is set before setWebcamActive(true)
+      // so the video is already playing when frame capture starts.
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        videoRef.current.play().catch(() => {});
       }
+
       setWebcamActive(true);
 
       // Send frames at 2fps — enough for ArcFace recognition
-      frameTimerRef.current = setInterval(async () => {
+      frameTimerRef.current = setInterval(() => {
         const video  = videoRef.current;
         const canvas = canvasRef.current;
         const ep     = iotRef.current;
@@ -149,6 +165,15 @@ const RecognitionKiosk: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-indigo-900 to-purple-900 text-white flex flex-col">
+
+      {/*
+        ALWAYS-PRESENT hidden elements for webcam frame capture.
+        These must be outside all conditional renders so refs are always valid.
+        The "Your cam" display below uses a SEPARATE video with a ref callback.
+      */}
+      <video ref={videoRef} autoPlay muted playsInline className="hidden" aria-hidden="true" />
+      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
+
       {/* Header */}
       <div className="bg-black/40 backdrop-blur-md border-b border-white/10">
         <div className="px-8 py-4 flex items-center justify-between flex-wrap gap-4">
@@ -181,7 +206,7 @@ const RecognitionKiosk: React.FC = () => {
             {webcamActive && (
               <div className="flex items-center gap-1.5 px-3 py-1 bg-cyan-500/20 border border-cyan-400/40 rounded-full">
                 <Video className="h-4 w-4 text-cyan-400 animate-pulse" />
-                <span className="text-xs text-cyan-300 font-medium">Sending frames</span>
+                <span className="text-xs text-cyan-300 font-medium">Webcam → Server</span>
               </div>
             )}
 
@@ -217,7 +242,7 @@ const RecognitionKiosk: React.FC = () => {
       <div className="flex-1 p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full min-h-[calc(100vh-200px)]">
 
-          {/* Primary display: Server annotated feed (shows recognized faces with boxes + names) */}
+          {/* Primary display: Server annotated MJPEG feed */}
           <div className="lg:col-span-2 bg-black/40 backdrop-blur-md rounded-2xl border-2 border-white/10 overflow-hidden flex flex-col">
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -256,13 +281,21 @@ const RecognitionKiosk: React.FC = () => {
                 </div>
               )}
 
-              {/* Small webcam preview (bottom-right corner) when sending frames */}
+              {/*
+                "Your cam" preview — a SEPARATE display video.
+                Uses a ref callback to get the stream from streamRef when rendered.
+                This is distinct from the always-present hidden capture video above.
+              */}
               {webcamActive && (
                 <div className="absolute bottom-3 right-3 w-32 h-24 rounded-lg overflow-hidden border-2 border-cyan-400/60 shadow-lg">
                   <video
-                    ref={videoRef}
                     autoPlay muted playsInline
                     className="w-full h-full object-cover"
+                    ref={(el) => {
+                      if (el && streamRef.current && !el.srcObject) {
+                        el.srcObject = streamRef.current;
+                      }
+                    }}
                   />
                   <div className="absolute top-0 left-0 right-0 bg-cyan-600/80 text-white text-xs text-center py-0.5">
                     Your cam
@@ -270,9 +303,6 @@ const RecognitionKiosk: React.FC = () => {
                 </div>
               )}
             </div>
-
-            {/* Hidden canvas for frame capture */}
-            <canvas ref={canvasRef} className="hidden" />
           </div>
 
           {/* Attendance panel */}
