@@ -1,17 +1,8 @@
----
-title: SAMS AI
-emoji: 🎓
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: true
-short_description: AI-Powered Student Attendance Management System
----
-
-# 🎓 AI-Powered Student Attendance Management System
+# 🎓 SAMS.AI : AI-Powered Student Attendance Management System
 
 A comprehensive full-stack web application featuring **AI-based face recognition** for automated student attendance tracking with real-time updates and multi-role access control.
+
+## Live Deployed Project URL : https://sagarswain-sams-ai.hf.space
 
 ![Python](https://img.shields.io/badge/Python-3.14-blue)
 ![Flask](https://img.shields.io/badge/Flask-3.1-green)
