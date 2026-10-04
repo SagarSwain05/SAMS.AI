@@ -30,6 +30,13 @@ class Config:
         SQLALCHEMY_DATABASE_URI = _raw_db_url
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = DEBUG
+    # Fail fast on an unreachable DB (e.g. Neon cold start) instead of hanging
+    # worker boot forever, and drop stale pooled connections after Neon suspends.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 280,
+        'connect_args': {'connect_timeout': 15},
+    }
 
     # JWT
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
@@ -91,6 +98,7 @@ class TestingConfig(Config):
     """Testing configuration"""
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'  # In-memory database for tests
+    SQLALCHEMY_ENGINE_OPTIONS = {}
 
 
 # Configuration dictionary

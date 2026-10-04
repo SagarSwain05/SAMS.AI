@@ -84,9 +84,18 @@ def create_app(config_name=None):
     get_pipeline().store.set_app(app)
 
     # Create database tables
+    # Retry so a sleeping Neon DB doesn't leave the Space stuck unhealthy; if it
+    # stays down, boot anyway so /api/health answers and requests reconnect later.
+    import time
     with app.app_context():
-        db.create_all()
-        print("Database tables created successfully!")
+        for attempt in range(1, 6):
+            try:
+                db.create_all()
+                print("Database tables created successfully!", flush=True)
+                break
+            except Exception as exc:
+                print(f"[DB] create_all attempt {attempt}/5 failed: {exc}", flush=True)
+                time.sleep(5)
 
     # ── Frontend static file serving ─────────────────────────────────────────
     # Serve the pre-built React app from frontend_dist/ so the entire SAMS.AI
