@@ -56,6 +56,7 @@ def create_app(config_name=None):
     from .routes import teachers as teachers_route
     from .routes.users import bp_branches, bp_sections, bp_users
     from .routes import admin as admin_route
+    from .routes import system as system_route
 
     app.register_blueprint(auth.bp, url_prefix='/api/auth')
     app.register_blueprint(students.bp, url_prefix='/api/students')
@@ -70,6 +71,7 @@ def create_app(config_name=None):
     app.register_blueprint(bp_sections, url_prefix='/api/sections')
     app.register_blueprint(bp_users,    url_prefix='/api/users')
     app.register_blueprint(admin_route.bp, url_prefix='/api/admin')
+    app.register_blueprint(system_route.bp, url_prefix='/api/system')
 
     # Register SocketIO events
     from . import sockets
@@ -131,10 +133,10 @@ def create_app(config_name=None):
 
     @app.route('/api/health')
     def api_health():
-        return {
-            'status': 'ok',
-            'database': 'connected',
-            'message': 'API is healthy'
-        }
+        database = system_route.check_database()
+        if database['ok']:
+            return {'status': 'ok', 'database': 'connected', 'message': 'API is healthy'}
+        return {'status': 'degraded', 'database': 'disconnected',
+                'message': database.get('error', 'Database unreachable')}, 503
 
     return app

@@ -1,0 +1,94 @@
+# Keeps the Hugging Face Space alive and self-heals it.
+#
+#  • Every 15 min: pings the Space (also stops it from going to sleep).
+#    If it is crashed/hung (e.g. "Launch timed out, workload was not healthy"),
+#    it restarts it automatically and fails the run so GitHub emails you.
+#  • Manual switch: Actions → "Space Watchdog" → Run workflow → choose
+#    check / restart / rebuild. Works even when the Space is completely down.
+#
+# Requires repo secret HF_TOKEN (Hugging Face token with write access).
+name: Space Watchdog
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to do'
+        type: choice
+        options: [check, restart, rebuild]
+        default: check
+
+permissions:
+  actions: write   # lets the run re-enable this workflow so GitHub never auto-disables it
+
+concurrency:
+  group: space-watchdog
+  cancel-in-progress: false
+
+env:
+  SPACE_ID: sagarswain/sams-ai
+  SPACE_URL: https://sagarswain-sams-ai.hf.space
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check and heal Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          ACTION: ${{ github.event.inputs.action || 'check' }}
+        run: |
+          set -u
+          api="https://huggingface.co/api/spaces/$SPACE_ID"
+          auth=(-H "Authorization: Bearer $HF_TOKEN")
+
+          restart() {  # $1 = "" or "?factory=true"
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${auth[@]}" "$api/restart$1")
+            echo "Restart request ($1) → HTTP $code"
+            [ "$code" = "200" ]
+          }
+
+          stage=$(curl -s "${auth[@]}" "$api/runtime" | jq -r '.stage // "UNKNOWN"')
+          err=$(curl -s "${auth[@]}" "$api/runtime" | jq -r '.errorMessage // ""')
+          echo "Space stage: $stage ${err:+($err)}"
+
+          if [ "$ACTION" = "restart" ]; then restart "" && exit 0 || exit 1; fi
+          if [ "$ACTION" = "rebuild" ]; then restart "?factory=true" && exit 0 || exit 1; fi
+
+          case "$stage" in
+            PAUSED)
+              echo "Space is paused manually — leaving it alone."; exit 0 ;;
+            BUILDING|RUNNING_BUILDING|APP_STARTING|RUNNING_APP_STARTING)
+              echo "Space is starting up — nothing to do."; exit 0 ;;
+            BUILD_ERROR|CONFIG_ERROR)
+              echo "::error::Space $stage: $err — needs a code/config fix (restart won't help)."; exit 1 ;;
+            RUNTIME_ERROR|STOPPED)
+              echo "::warning::Space is $stage — restarting."
+              restart ""; exit 1 ;;
+          esac
+
+          # RUNNING or SLEEPING: hitting the URL wakes it; give it up to ~3 min to answer.
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -m 30 -w '%{http_code}' "$SPACE_URL/api/system/ping")
+            echo "Ping $i → HTTP $code"
+            if [ "$code" = "200" ]; then
+              health=$(curl -s -m 30 "$SPACE_URL/api/health")
+              echo "Health: $health"
+              echo "$health" | grep -q '"database":"connected"' || \
+                echo "::warning::Backend is up but the database is unreachable (check Neon)."
+              exit 0
+            fi
+            sleep 30
+          done
+
+          echo "::warning::Space stage is $stage but the app is not responding — restarting."
+          restart ""; exit 1
+
+      - name: Keep this scheduled workflow enabled
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/space-watchdog.yml/enable" || true

@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   LogOut, Users, Camera, Settings, UserPlus, Shield, BarChart3,
   MonitorPlay, Monitor, ScanFace, Home, Calendar, CheckCircle, TrendingUp, ClipboardList,
-  Users2, X, Eye, Lock, BookOpen, Briefcase, Phone, Mail,
+  Users2, X, Eye, Lock, BookOpen, Briefcase, Phone, Mail, Activity,
 } from 'lucide-react';
 import { recognitionAPI } from '../services/api';
 import StudentRegistration from './StudentRegistration';
@@ -17,6 +17,7 @@ import TodaySchedule from './TodaySchedule';
 import AdminDailyReport from './AdminDailyReport';
 import TimetableManager from './TimetableManager';
 import AdminAnalytics from './AdminAnalytics';
+import SystemHealth from './SystemHealth';
 import ISTClock from './ISTClock';
 import toast from 'react-hot-toast';
 
@@ -42,7 +43,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type TabType = 'overview' | 'students' | 'teachers' | 'recognition' | 'live_feeds' | 'timetable' | 'analytics' | 'daily_report' | 'enrollment' | 'users' | 'settings';
+type TabType = 'overview' | 'students' | 'teachers' | 'recognition' | 'live_feeds' | 'timetable' | 'analytics' | 'daily_report' | 'enrollment' | 'users' | 'settings' | 'system';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -604,6 +605,7 @@ const TAB_PATHS: Record<string, TabType> = {
   'enrollment':   'enrollment',
   'users':        'users',
   'settings':     'settings',
+  'system':       'system',
 };
 const TAB_TO_PATH: Record<TabType, string> = {
   overview:      '/admin',
@@ -617,6 +619,7 @@ const TAB_TO_PATH: Record<TabType, string> = {
   enrollment:    '/admin/enrollment',
   users:         '/admin/users',
   settings:      '/admin/settings',
+  system:        '/admin/system',
 };
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
@@ -796,6 +799,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
               <Tab id="enrollment"   active={activeTab} onClick={setActiveTab} icon={<ScanFace className="h-4 w-4" />}      label="Enroll Faces" />
               <Tab id="users"        active={activeTab} onClick={setActiveTab} icon={<UserPlus className="h-4 w-4" />}    label="User Management" />
               <Tab id="settings"     active={activeTab} onClick={setActiveTab} icon={<Settings className="h-4 w-4" />}    label="Settings" />
+              <Tab id="system"       active={activeTab} onClick={setActiveTab} icon={<Activity className="h-4 w-4" />}    label="System Health" />
             </nav>
           </div>
 
@@ -1170,6 +1174,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
           {/* ── USER MANAGEMENT ──────────────────────────────────────────── */}
           {activeTab === 'users' && (
             <UserManagement />
+          )}
+
+          {/* ── SYSTEM HEALTH ──────────────────────────────────────────── */}
+          {activeTab === 'system' && (
+            <SystemHealth />
           )}
 
           {/* ── SETTINGS ─────────────────────────────────────────────────── */}
