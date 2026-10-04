@@ -227,6 +227,34 @@ StudentManagementSystem/
 | POST   | /bulk                       | Yes  | body: {student_ids[], message, type} |
 | PUT    | /{id}/read                  | Yes  |       |
 
+### System `/api/system` (health & restart)
+| Method | Path     | Auth  | Notes |
+|--------|----------|-------|-------|
+| GET    | /ping    | No    | liveness only (no DB) — used by GitHub watchdog |
+| GET    | /status  | No    | component health: backend, database, frontend, face_recognition; 503 if DB down |
+| GET    | /space   | Admin | Hugging Face Space runtime stage |
+| POST   | /restart | Admin | body: {target: database \| worker \| space \| space_rebuild} |
+
+`/api/health` also checks the DB for real (503 + `"database":"disconnected"` when unreachable).
+
+---
+
+## Production Deployment & Self-Healing (Hugging Face Space)
+
+- **Live URL:** https://sagarswain-sams-ai.hf.space (Space `sagarswain/sams-ai`, Docker, cpu-basic, DB on Neon)
+- **Deploy:** `git push hfspace main` (also `git push origin main` for GitHub). Root `app/` is what the Space builds;
+  keep `backend/app/` identical. Rebuild `frontend_dist/` with
+  `VITE_API_URL=https://sagarswain-sams-ai.hf.space/api npx vite build --outDir ../frontend_dist` (from `frontend/`).
+- **README.md must keep the YAML header** (`sdk: docker`, `app_port: 7860`) — without it the Space won't start.
+- **Admin → System Health tab** (`frontend/src/components/SystemHealth.tsx`, `/admin/system`): live component +
+  API status and restart buttons (Reconnect DB → Restart Backend → Restart Space → Factory Rebuild).
+- **GitHub watchdog** (`.github/workflows/space-watchdog.yml`): every 15 min pings the Space (keeps it awake),
+  auto-restarts it if crashed/hung; manual Run workflow → check / restart / rebuild.
+- **Secrets:** `HF_TOKEN` (write token) on both the HF Space and the GitHub repo. Space also has DATABASE_URL,
+  SECRET_KEY, JWT_SECRET_KEY, FLASK_ENV, PORT, CAMERA_INDEX, CORS_ORIGINS.
+- **Startup hardening:** DB connect_timeout=15s, pool_pre_ping, bounded `db.create_all()` retries — a slow/asleep
+  Neon DB can no longer hang worker boot ("Launch timed out, workload was not healthy after 30 min").
+
 ---
 
 ## Database Schema (Full CAMS Schema)

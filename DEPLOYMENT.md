@@ -120,3 +120,17 @@ git push origin main
 ```
 
 Vercel redeploys in ~1 min. HF Spaces redeploys in ~3-5 min.
+
+---
+
+## Monitoring & Restarting
+
+- **In the app:** log in as admin → **System Health** tab. Shows backend, database, frontend, WebSocket,
+  face recognition, every API group and the Space stage. Restart buttons, lightest first:
+  Reconnect Database → Restart Backend (~15 s) → Restart Space (~2–5 min) → Factory Rebuild (~10 min).
+- **When the app won't open at all:** GitHub → Actions → **Space Watchdog** → Run workflow → `restart`.
+  The watchdog also runs every 15 min on its own and restarts a crashed/hung Space automatically
+  (a red run = it had to restart, and GitHub emails you).
+- **Fallback:** Space Settings on huggingface.co → Restart / Factory rebuild.
+- **Required secret:** `HF_TOKEN` (Hugging Face write token) in both the Space settings and the GitHub repo
+  (Settings → Secrets and variables → Actions). If you regenerate the token, update both.
